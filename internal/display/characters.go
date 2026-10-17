@@ -17,6 +17,12 @@ import (
 //go:embed assets/stylized/*.svg
 var characterAssets embed.FS
 
+// Rig coordinates use a 128×140 layer: the 320×350 source viewBox at 0.4.
+const (
+	layerWidth, layerHeight = 128, 140
+	layerSupersample        = 2
+)
+
 type characterSprite struct {
 	name                                string
 	backHair, leftLeg, rightLeg         *ebiten.Image
@@ -79,8 +85,10 @@ func loadCharacterLayer(id, layer string) (*ebiten.Image, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
-	const width, height = 128, 140
-	icon.SetTarget(0, 0, width, height)
+	// Layers are rasterized above their on-screen size and filtered down so
+	// outlines stay smooth; rig pivots remain in 128×140 layer units.
+	width, height := layerWidth*layerSupersample, layerHeight*layerSupersample
+	icon.SetTarget(0, 0, float64(width), float64(height))
 	rgba := image.NewRGBA(image.Rect(0, 0, width, height))
 	scanner := rasterx.NewScannerGV(width, height, rgba, rgba.Bounds())
 	icon.Draw(rasterx.NewDasher(width, height, scanner), 1)

@@ -4,6 +4,7 @@ package tui
 import (
 	"fmt"
 	"image/color"
+	"sort"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -219,60 +220,167 @@ func (m model) View() string {
 		return ""
 	}
 	p := theme.ByID(m.settings.Theme)
-	title := lipgloss.NewStyle().Bold(true).Foreground(ansi(p.Accent)).Render("DOTGAME  /  BUILD YOUR TABLE")
-	dim := lipgloss.NewStyle().Foreground(ansi(p.Muted))
-	label := lipgloss.NewStyle().Foreground(ansi(p.Text))
-	selected := lipgloss.NewStyle().Bold(true).Foreground(ansi(p.Background)).Background(ansi(p.Accent)).Padding(0, 1)
-	var rows []string
-	add := func(name, value string) {
-		i := len(rows)
-		line := fmt.Sprintf(" %-19s ◀ %-17s ▶", name, value)
-		if i == m.cursor {
-			line = selected.Render(line)
-		} else {
-			line = label.Render(line)
-		}
-		rows = append(rows, line)
+	fg := func(c color.RGBA) lipgloss.Style { return lipgloss.NewStyle().Foreground(ansi(c)) }
+	dim, text, accent := fg(p.Muted), fg(p.Text), fg(p.Accent).Bold(true)
+	selected := lipgloss.NewStyle().Bold(true).Foreground(ansi(p.Background)).Background(ansi(p.Accent))
+	const rowWidth = 50
+
+	// Wordmark: a tiny claimed box drawn with the first two seat colors.
+	edgeA, edgeB := fg(p.Players[0]).Bold(true), fg(p.Players[1]).Bold(true)
+	dot := text.Render("●")
+	logo := []string{
+		dot + edgeA.Render("━━━") + dot + "    " + accent.Render("D O T G A M E"),
+		edgeB.Render("┃") + fg(p.Players[0]).Render("▒▒▒") + edgeA.Render("┃") + "    " + dim.Render("Build your table"),
+		dot + edgeB.Render("━━━") + dot,
 	}
-	addAction := func(name, shortcut string) {
-		i := len(rows)
-		line := fmt.Sprintf(" %-29s %-13s", name, shortcut)
-		if i == m.cursor {
-			line = selected.Render(line)
-		} else {
-			line = label.Render(line)
+
+	var lines []string
+	row := 0
+	section := func(name string) {
+		if len(lines) > 0 {
+			lines = append(lines, "")
 		}
-		rows = append(rows, line)
+		lines = append(lines, dim.Render(strings.ToUpper(name)))
 	}
-	add("Board width", fmt.Sprintf("%d boxes", m.settings.Width))
-	add("Board height", fmt.Sprintf("%d boxes", m.settings.Height))
-	add("Seats", fmt.Sprintf("%d players", len(m.settings.Players)))
+	// setting renders one adjustable row; marker is an optional colored glyph.
+	setting := func(name, value, marker string, markerColor color.RGBA) {
+		if row == m.cursor {
+			body := fmt.Sprintf(" ▸ %-17s‹ %s ›", name, value)
+			if marker != "" {
+				body = fmt.Sprintf(" ▸ %s %-15s‹ %s ›", marker, name, value)
+			}
+			lines = append(lines, selected.Render(fmt.Sprintf("%-*s", rowWidth, body)))
+		} else {
+			lead := "   "
+			if marker != "" {
+				lead = "   " + fg(markerColor).Render(marker) + " "
+				name = fmt.Sprintf("%-15s", name)
+			} else {
+				name = fmt.Sprintf("%-17s", name)
+			}
+			lines = append(lines, lead+dim.Render(name)+"  "+text.Render(value))
+		}
+		row++
+	}
+	action := func(name, key string, primary bool) {
+		label := fmt.Sprintf("  %-*s%s  ", rowWidth-len(key)-4, name, key)
+		switch {
+		case row == m.cursor:
+			lines = append(lines, selected.Render(label))
+		case primary:
+			lines = append(lines, lipgloss.NewStyle().Bold(true).Foreground(ansi(p.Accent)).Render(label))
+		default:
+			lines = append(lines, text.Render(label))
+		}
+		row++
+	}
+
+	section("Table")
+	setting("Board width", fmt.Sprintf("%d boxes", m.settings.Width), "", p.Text)
+	setting("Board height", fmt.Sprintf("%d boxes", m.settings.Height), "", p.Text)
+	setting("Seats", fmt.Sprintf("%d players", len(m.settings.Players)), "", p.Text)
+	section("Players")
 	for i, player := range m.settings.Players {
-		kind := strings.ToUpper(string(player.Kind))
+		kind := "HUMAN"
 		if player.Kind == config.AI {
-			kind += " · " + strings.ToUpper(player.Difficulty)
+			kind = "AI · " + strings.ToUpper(player.Difficulty)
 		}
-		add(fmt.Sprintf("%d  %s", i+1, player.Name), kind)
+		setting(player.Name, kind, "●", p.Players[i%len(p.Players)])
 	}
-	add("AI strength", strings.ToUpper(aiLevel(m.settings.Players)))
-	add("Theme", theme.ByID(m.settings.Theme).Name)
-	if m.settings.Animations {
-		add("Animation", "FULL")
-	} else {
-		add("Animation", "REDUCED")
+	setting("AI strength", strings.ToUpper(aiLevel(m.settings.Players)), "", p.Text)
+	section("Presentation")
+	swatch := ""
+	for _, c := range p.Players {
+		swatch += fg(c).Render("■")
 	}
-	addAction("START MATCH", "[ S / ENTER ]")
-	addAction("WATCH AI MATCH", "[ W / ENTER ]")
-	addAction("TRAIN 10 SELF-PLAY", "[ ENTER ]")
-	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(ansi(p.Line)).Padding(1, 2).Width(54).Render(strings.Join(rows, "\n"))
-	stats := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(ansi(p.Line)).Padding(1, 2).Width(33).Render(fmt.Sprintf("%s\n\nGames played      %d\nTies              %d\nMoves observed    %d\nBoxes captured    %d\nAverage moves     %.1f\n\n%s\nTraining games    %d\nLearned positions %d\nAI decisions      %d\nSearch iterations %d\nNeural value      ONLINE", lipgloss.NewStyle().Bold(true).Foreground(ansi(p.Accent)).Render("LIFETIME STATS"), m.stats.Games, m.stats.Ties, m.stats.TotalMoves, m.stats.Boxes, average(m.stats.TotalMoves, m.stats.Games), lipgloss.NewStyle().Bold(true).Foreground(ansi(p.Accent)).Render("AI CAPABILITY"), m.learnedGames, m.positions, m.decisions, m.searches))
-	body := lipgloss.JoinHorizontal(lipgloss.Top, box, "  ", stats)
-	help := dim.Render("↑/↓ navigate   ←/→ change   S start game   W watch AI   q quit")
+	setting("Theme", p.Name, "", p.Text)
+	// The swatch follows unselected rows only, so selection styling stays intact.
+	if row-1 != m.cursor {
+		lines[len(lines)-1] += "  " + swatch
+	}
+	motion := "FULL"
+	if !m.settings.Animations {
+		motion = "REDUCED"
+	}
+	setting("Motion", motion, "", p.Text)
+	lines = append(lines, "")
+	action("▶  START MATCH", "S", true)
+	action("◉  WATCH AI MATCH", "W", false)
+	action("↻  TRAIN 10 SELF-PLAY", "ENTER", false)
+
+	panel := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(ansi(p.Line)).Padding(1, 2)
+	setup := panel.Width(rowWidth + 6).Render(strings.Join(lines, "\n"))
+
+	stat := func(name string, value any) string {
+		return dim.Render(fmt.Sprintf("%-18s", name)) + text.Bold(true).Render(fmt.Sprint(value))
+	}
+	statLines := []string{
+		accent.Render("LIFETIME"),
+		stat("Games played", m.stats.Games),
+		stat("Ties", m.stats.Ties),
+		stat("Boxes captured", m.stats.Boxes),
+		stat("Average moves", fmt.Sprintf("%.1f", average(m.stats.TotalMoves, m.stats.Games))),
+	}
+	if leaders := topWinners(m.stats.Wins, 3); len(leaders) > 0 {
+		statLines = append(statLines, "", accent.Render("TOP WINNERS"))
+		most := leaders[0].wins
+		for i, l := range leaders {
+			bar := strings.Repeat("█", max(1, l.wins*10/most))
+			name := l.name
+			if len([]rune(name)) > 9 {
+				name = string([]rune(name)[:9])
+			}
+			statLines = append(statLines, dim.Render(fmt.Sprintf("%-10s", name))+fg(p.Players[i%len(p.Players)]).Render(fmt.Sprintf("%-11s", bar))+text.Render(fmt.Sprint(l.wins)))
+		}
+	}
+	statLines = append(statLines, "", accent.Render("AI BRAIN"),
+		stat("Training games", m.learnedGames),
+		stat("Learned positions", m.positions),
+		stat("Decisions", m.decisions),
+		stat("Search iterations", m.searches),
+		dim.Render(fmt.Sprintf("%-18s", "Value network"))+fg(p.Accent).Render("● ONLINE"),
+	)
+	stats := panel.Width(36).Render(strings.Join(statLines, "\n"))
+	body := lipgloss.JoinHorizontal(lipgloss.Top, setup, "  ", stats)
+
+	key := lipgloss.NewStyle().Foreground(ansi(p.Background)).Background(ansi(p.Muted)).Padding(0, 1)
+	help := strings.Join([]string{
+		key.Render("↑↓") + dim.Render(" navigate"),
+		key.Render("←→") + dim.Render(" change"),
+		key.Render("S") + dim.Render(" start"),
+		key.Render("W") + dim.Render(" watch AI"),
+		key.Render("Q") + dim.Render(" quit"),
+	}, "   ")
 	msg := ""
 	if m.message != "" {
-		msg = "\n" + lipgloss.NewStyle().Foreground(ansi(p.Players[0])).Render(m.message)
+		msg = "\n\n" + fg(p.Players[0]).Bold(true).Render("! "+m.message)
 	}
-	return lipgloss.NewStyle().Padding(1, 3).Render(title + "\n" + dim.Render("Terminal setup · theme changes save immediately") + "\n\n" + body + "\n\n" + help + msg)
+	return lipgloss.NewStyle().Padding(1, 3).Render(strings.Join(logo, "\n") + "\n\n" + body + "\n\n" + help + msg)
+}
+
+type leader struct {
+	name string
+	wins int
+}
+
+// topWinners returns up to n players with the most wins, ties by name.
+func topWinners(wins map[string]int, n int) []leader {
+	var all []leader
+	for name, w := range wins {
+		if w > 0 {
+			all = append(all, leader{name, w})
+		}
+	}
+	sort.Slice(all, func(i, j int) bool {
+		if all[i].wins != all[j].wins {
+			return all[i].wins > all[j].wins
+		}
+		return all[i].name < all[j].name
+	})
+	if len(all) > n {
+		all = all[:n]
+	}
+	return all
 }
 
 func average(total, count int) float64 {

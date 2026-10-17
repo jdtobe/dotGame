@@ -18,9 +18,12 @@
 ## Rendering assets and animation
 
 - Runtime character art is the 80 SVG files under `internal/display/assets/stylized`, embedded and rasterized by `characters.go`. Each character must provide exactly: `back-hair`, `leg-left`, `leg-right`, `arm-left`, `arm-right`, `body`, `head-group`, and `prop` layers.
-- Never recreate character layers by cropping a flattened image: that previously caused duplicated outlines and cut-off parts. Props share the right-arm pivot; back hair shares the head pivot. Runtime layers rasterize to 128×140, and pivots in `drawVillage` assume the 320×350 source viewBox at 0.4 scale.
+- Never recreate character layers by cropping a flattened image: that previously caused duplicated outlines and cut-off parts. Props share the right-arm pivot; back hair shares the head pivot. Rig coordinates are 128×140 layer units (the 320×350 source viewBox at 0.4). Layers rasterize at `layerSupersample`× that size and draw with linear filtering through `rigPose.rigGeoM`, which `leftHand`/`rightHand` reuse so placards and rockets stay attached to hands.
 - The HTML files under `design/` are standalone concept galleries, not runtime inputs. Editing a gallery does not regenerate embedded SVG assets; update both deliberately.
-- Captured boxes retain independent animation records. Preserve the 250 ms queue stagger and delay the victory overlay until the final 1.15 s capture animation completes; do not replace the queue with a single “latest capture” value.
+- Captured boxes retain independent animation records. Preserve the queue stagger (`captureStagger`, 110 ms) and delay the victory overlay until the final capture animation (`captureDuration`, 0.42 s) completes; do not replace the queue with a single “latest capture” value.
+- The celebration (`celebration.go`) is a pure function of time since `gameOverAt`. Reduced motion evaluates the settled end state with the looping clock at zero, so don't add per-frame state to it.
+- `board.go` caches the settled board in an offscreen layer that is redrawn only when `boardLayerKey` changes. Anything new that affects the static board must go into that key, or the layer goes stale.
+- `color.RGBA` is premultiplied. Use `withAlpha` to fade a color; setting only `.A` brightens it instead of making it translucent.
 - `internal/theme/theme.go` is the shared palette registry. Hover colors intentionally differ from every player color, and intersection dots are intentionally dim.
 
 ## AI constraints
